@@ -38,6 +38,7 @@
   .btn.sec{ background:#e2e8f0; color:#0f172a; }
   .btn.ghost{ background:transparent; color:#fff; border:2px solid rgba(255,255,255,.4); box-shadow:none; }
   .btn.small{ padding:8px 12px; font-size:14px; border-radius:10px; box-shadow:none; }
+  .btn.on{ background:var(--accent); color:#04302b; }
   .btn:disabled{ opacity:.45; cursor:not-allowed; }
   .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
   .card{ background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; }
@@ -118,6 +119,18 @@
       <button class="btn sec small" id="clearRows" style="margin-left:auto">🗑 표 비우기</button>
       <button class="btn sec small" id="csv">⬇️ CSV 저장</button>
       <button class="btn sec small" id="copy">📄 복사</button>
+    </div>
+    <div class="row mt">
+      <span class="muted" style="font-size:13px">⏱ 자동 기록 간격</span>
+      <button class="btn sec small ivl" data-ms="1000">1초</button>
+      <button class="btn sec small ivl" data-ms="2000">2초</button>
+      <button class="btn sec small ivl" data-ms="5000">5초</button>
+      <button class="btn sec small ivl" data-ms="10000">10초</button>
+      <span class="muted" style="font-size:13px">직접:</span>
+      <input type="number" id="ivlCustom" min="0.5" step="0.5" placeholder="초" style="width:76px" />
+      <span class="muted" style="font-size:13px">초</span>
+      <button class="btn sec small" id="ivlApply">적용</button>
+      <span class="muted" style="font-size:13px" id="ivlNow">현재 1초 간격</span>
     </div>
     <div class="scroll mt">
       <table id="recTable"><thead></thead><tbody></tbody></table>
@@ -279,7 +292,6 @@
       if(c.hist.length>120) c.hist.shift();
       drawSpark(c);
     }
-    if(recording) recSample();
   }
 
   function drawSpark(c){
@@ -326,8 +338,9 @@
   }
 
   // ── 기록(스냅샷 + 자동) ──
-  var rows = [];              // {label, time, values:{key:val}}
-  var recording=false, recTimer=null, recStart=0, lastAutoLabel=0;
+  var rows = [];              // {label, time, values:{id:val}}
+  var recording=false, recTimer=null, recStart=0;
+  var recIntervalMs=1000, recSampleTimer=null;   // 자동 기록 간격
 
   function currentSensors(){
     var list=[];
@@ -369,23 +382,35 @@
     rows.push({ label:label, time:nowStr(), values:vals });
     renderRows();
   }
-  function recSample(){
-    // 자동 기록 시 최대 2Hz로 저장
-    var t=Date.now(); if(t-lastAutoLabel<450) return; lastAutoLabel=t;
-    var sec=Math.round((t-recStart)/1000);
+  function recordRow(){
+    var sec=Math.round((Date.now()-recStart)/1000);
     var vals={}; currentSensors().forEach(function(s){ vals[s.id]=s.val; });
     rows.push({ label:"+"+sec+"초", time:nowStr(), values:vals });
     renderRows();
   }
+  function startSampleTimer(){ stopSampleTimer(); recSampleTimer=setInterval(recordRow, recIntervalMs); }
+  function stopSampleTimer(){ if(recSampleTimer){ clearInterval(recSampleTimer); recSampleTimer=null; } }
+  function updateElapsed(){ var s=Math.round((Date.now()-recStart)/1000); $("timer").textContent=(s<600?"0":"")+Math.floor(s/60)+":"+((s%60)<10?"0":"")+(s%60); }
   function toggleRec(){
     recording=!recording;
     var b=$("recToggle"), tm=$("timer");
     if(recording){
-      recStart=Date.now(); lastAutoLabel=0; b.textContent="⏹ 자동 기록 정지"; tm.style.display="inline"; tm.textContent="00:00";
-      recTimer=setInterval(function(){ var s=Math.round((Date.now()-recStart)/1000); tm.textContent=(s<600?"0":"")+Math.floor(s/60)+":"+((s%60)<10?"0":"")+(s%60); },500);
+      recStart=Date.now(); b.textContent="⏹ 자동 기록 정지"; tm.style.display="inline"; tm.textContent="00:00";
+      recordRow();                          // 시작 즉시 0초 값 1행
+      startSampleTimer();                    // 이후 간격마다 기록
+      recTimer=setInterval(updateElapsed,250);
     }else{
-      b.textContent="▶ 자동 기록 시작"; tm.style.display="none"; clearInterval(recTimer);
+      b.textContent="▶ 자동 기록 시작"; tm.style.display="none";
+      clearInterval(recTimer); stopSampleTimer();
     }
+  }
+  function applyInterval(ms){
+    recIntervalMs = Math.max(500, Math.round(ms));   // 최소 0.5초
+    $("ivlNow").textContent = "현재 " + (recIntervalMs/1000) + "초 간격";
+    Array.prototype.forEach.call(document.querySelectorAll(".ivl"), function(btn){
+      btn.classList.toggle("on", parseInt(btn.getAttribute("data-ms"),10)===recIntervalMs);
+    });
+    if(recording) startSampleTimer();   // 기록 중이면 새 간격으로 재시작
   }
   function csv(){
     var defs=colDefs();
@@ -434,6 +459,14 @@
   $("disconnectAll").addEventListener("click", disconnectAll);
   $("snapshot").addEventListener("click", function(){ snapshot(false); });
   $("recToggle").addEventListener("click", toggleRec);
+  Array.prototype.forEach.call(document.querySelectorAll(".ivl"), function(btn){
+    btn.addEventListener("click", function(){ applyInterval(parseInt(btn.getAttribute("data-ms"),10)); });
+  });
+  $("ivlApply").addEventListener("click", function(){
+    var sec=parseFloat($("ivlCustom").value);
+    if(isFinite(sec) && sec>0){ applyInterval(sec*1000); }
+  });
+  applyInterval(1000);  // 기본 1초, 프리셋 하이라이트
   $("clearRows").addEventListener("click", function(){ rows=[]; renderRows(); });
   $("csv").addEventListener("click", csv);
   $("copy").addEventListener("click", copyTable);
