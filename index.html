@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>버니어 센서 표시기</title>
+<style>
+  :root{
+    --bg:#f1f5f9; --card:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+    --header:#1e1b4b; --accent:#14b8a6; --accent2:#0d9488;
+    --c1:#0d9488; --c2:#f59e0b; --c3:#7c3aed; --c4:#3b82f6;
+    --warn:#e11d48;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0b1220; --card:#111827; --ink:#e5e7eb; --muted:#94a3b8; --line:#1f2937; --header:#111827; }
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  header{ background:var(--header); color:#fff; }
+  .wrap{ max-width:960px; margin:0 auto; padding:0 16px; }
+  header .wrap{ display:flex; align-items:center; gap:12px; padding:16px; flex-wrap:wrap; }
+  .logo{ font-size:28px; }
+  h1{ font-size:22px; margin:0; line-height:1.1; }
+  .sub{ font-size:13px; color:#c7d2fe; }
+  main{ padding:20px 0 60px; }
+  .btn{
+    appearance:none; border:none; cursor:pointer; font-weight:800;
+    border-radius:14px; padding:14px 20px; font-size:17px;
+    background:var(--accent); color:#04302b;
+    box-shadow:0 3px 0 rgba(0,0,0,.12); transition:transform .05s;
+  }
+  .btn:active{ transform:translateY(2px); box-shadow:0 1px 0 rgba(0,0,0,.12); }
+  .btn.sec{ background:#e2e8f0; color:#0f172a; }
+  .btn.ghost{ background:transparent; color:#fff; border:2px solid rgba(255,255,255,.4); box-shadow:none; }
+  .btn.small{ padding:8px 12px; font-size:14px; border-radius:10px; box-shadow:none; }
+  .btn:disabled{ opacity:.45; cursor:not-allowed; }
+  .row{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:18px; padding:16px; }
+  .mt{ margin-top:16px; }
+  .muted{ color:var(--muted); }
+  .pill{ display:inline-block; border:1px solid var(--line); border-radius:999px; padding:2px 10px; font-size:12px; font-weight:700; }
+
+  /* 연결 안내 */
+  #notice{ display:none; }
+  #notice.show{ display:block; }
+  #notice.warn{ border:2px solid var(--warn); }
+
+  /* 센서 카드 그리드 */
+  #cards{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px,1fr)); gap:14px; margin-top:16px; }
+  .sensor{ background:var(--card); border:2px solid var(--line); border-radius:18px; padding:14px; position:relative; overflow:hidden; }
+  .sensor .dev{ font-size:12px; color:var(--muted); font-weight:700; }
+  .sensor .name{ font-size:15px; font-weight:800; margin-top:2px; }
+  .sensor .val{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; margin:8px 0 2px; font-size:44px; }
+  .sensor .unit{ font-size:16px; font-weight:800; color:var(--muted); margin-left:4px; }
+  .sensor canvas{ width:100%; height:56px; display:block; margin-top:8px; }
+  .swatch{ position:absolute; top:0; left:0; width:100%; height:6px; }
+
+  table{ width:100%; border-collapse:collapse; font-size:14px; }
+  th,td{ border:1px solid var(--line); padding:6px 8px; text-align:center; white-space:nowrap; }
+  th{ background:rgba(20,184,166,.12); font-weight:800; }
+  .scroll{ overflow-x:auto; }
+  input[type=text]{ border:2px solid var(--line); border-radius:10px; padding:8px 10px; font-size:15px; background:var(--card); color:var(--ink); }
+  .timer{ font-variant-numeric:tabular-nums; font-weight:900; font-size:20px; }
+  footer{ color:var(--muted); font-size:12px; text-align:center; padding:24px; }
+  a{ color:var(--accent2); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="logo">📡</div>
+    <div style="flex:1">
+      <h1>버니어 센서 표시기</h1>
+      <div class="sub">Go Direct 센서를 USB로 연결해 값을 바로 봅니다 · 설치 없이 브라우저만</div>
+    </div>
+    <button class="btn ghost small" id="help">도움말</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <!-- 연결 -->
+  <div class="card">
+    <div class="row">
+      <button class="btn" id="connectUsb">🔌 USB 센서 연결</button>
+      <button class="btn sec" id="connectBt">📶 블루투스로 연결</button>
+      <span class="pill" id="count">연결된 센서 0개</span>
+      <button class="btn sec small" id="disconnectAll" style="margin-left:auto" disabled>전체 연결 끊기</button>
+    </div>
+    <div class="muted mt" style="font-size:13px">
+      센서를 <b>하나씩</b> 추가하세요(버튼을 누를 때마다 1개). 최대 <b>4개</b>까지 동시에 볼 수 있어요.
+      4개를 USB로 연결할 땐 <b>전원 공급형 USB 허브</b>를 쓰는 것이 안정적이에요.
+    </div>
+  </div>
+
+  <!-- 미지원/안내 -->
+  <div id="notice" class="card mt"></div>
+
+  <!-- 실시간 값 카드 -->
+  <div id="cards"></div>
+
+  <!-- 기록 -->
+  <div class="card mt" id="recordCard" style="display:none">
+    <div class="row">
+      <b style="font-size:16px">📋 값 기록</b>
+      <input type="text" id="label" placeholder="이름표 (예: 29° 겨울)" style="min-width:160px" />
+      <button class="btn small" id="snapshot">📸 지금 값 기록</button>
+      <span style="width:12px"></span>
+      <button class="btn sec small" id="recToggle">▶ 자동 기록 시작</button>
+      <span class="timer" id="timer" style="display:none">00:00</span>
+      <button class="btn sec small" id="clearRows" style="margin-left:auto">🗑 표 비우기</button>
+      <button class="btn sec small" id="csv">⬇️ CSV 저장</button>
+      <button class="btn sec small" id="copy">📄 복사</button>
+    </div>
+    <div class="scroll mt">
+      <table id="recTable"><thead></thead><tbody></tbody></table>
+    </div>
+    <div class="muted mt" style="font-size:12px" id="copyMsg"></div>
+  </div>
+</main>
+
+<footer>
+  KIM YOUNGDAE 선생님 · 버니어 Go Direct 센서 표시기 · 웹 블루투스/USB(WebHID) · © 2026<br />
+  Go Direct sensor library © Vernier Software (BSD-3-Clause)
+</footer>
+
+<script src="./godirect.min.umd.js"></script>
+<script>
+(function(){
+  "use strict";
+  var VERNIER_VID = 0x08F7;                                  // 버니어 USB 벤더 ID
+  var GDX_SERVICE = "d91714ef-28b9-4f91-ba16-f0d9a604f112";   // Go Direct 블루투스 서비스
+  var COLORS = ["#0d9488","#f59e0b","#7c3aed","#3b82f6","#ec4899","#059669"];
+
+  var devices = [];       // godirect Device 목록
+  var cards = new Map();   // key: devIndex+':'+sensorNumber → {el, valEl, canvas, hist:[], color, sensor}
+  var colorIdx = 0;
+
+  var $ = function(id){ return document.getElementById(id); };
+  var round = function(v){ if(!isFinite(v)) return "—"; var a=Math.abs(v); return (a>=100? v.toFixed(0) : a>=10? v.toFixed(1) : v.toFixed(2)); };
+
+  function showNotice(html, warn){
+    var n = $("notice"); n.innerHTML = html;
+    n.className = "card mt show" + (warn? " warn" : "");
+    n.style.display="block";
+  }
+  function hideNotice(){ $("notice").className="card mt"; $("notice").style.display="none"; }
+
+  function updateCount(){
+    var n=0; devices.forEach(function(d){ n += d.sensors.filter(function(s){return s.enabled;}).length; });
+    $("count").textContent = "연결된 센서 " + n + "개";
+    $("disconnectAll").disabled = devices.length===0;
+    $("recordCard").style.display = n>0 ? "block" : "none";
+    rebuildTableHead();
+  }
+
+  // ── 연결: USB(WebHID) ──
+  async function connectUsb(){
+    hideNotice();
+    if(!("hid" in navigator)){
+      showNotice("<b>⚠️ 이 브라우저는 USB(WebHID) 연결을 지원하지 않아요.</b><br>"+
+        "크롬 계열 브라우저(Chrome·Edge·<b>웨일</b>)에서, <b>https:// 주소</b>로 연 페이지에서만 됩니다. "+
+        "(관리형 기기라면 WebHID가 정책으로 막혀 있을 수 있어요.)", true);
+      return;
+    }
+    try{
+      var picked = await navigator.hid.requestDevice({ filters:[{ vendorId: VERNIER_VID }] });
+      if(!picked || !picked.length) return; // 사용자가 취소
+      for(var i=0;i<picked.length;i++){ await addDevice(picked[i], "USB"); }
+    }catch(e){ handleErr(e); }
+  }
+
+  // ── 연결: 블루투스(예비) ──
+  async function connectBt(){
+    hideNotice();
+    if(!(navigator.bluetooth)){
+      showNotice("<b>⚠️ 이 브라우저는 웹 블루투스를 지원하지 않아요.</b><br>크롬 계열 브라우저에서 https:// 주소로 열어 주세요.", true);
+      return;
+    }
+    try{
+      var ble = await navigator.bluetooth.requestDevice({ filters:[{ namePrefix:"GDX" }], optionalServices:[GDX_SERVICE] });
+      await addDevice(ble, "블루투스");
+    }catch(e){ handleErr(e); }
+  }
+
+  function handleErr(e){
+    if(e && (e.name==="NotFoundError")) return; // 선택 취소
+    console.error(e);
+    showNotice("<b>연결 중 문제가 생겼어요.</b><br>센서 전원을 켜고 케이블을 다시 꽂은 뒤 시도해 보세요.<br>"+
+      "<span class='muted' style='font-size:12px'>("+(e && e.message ? e.message : e)+")</span>", true);
+  }
+
+  async function addDevice(nativeDevice, via){
+    var gdx;
+    try{
+      gdx = await godirect.createDevice(nativeDevice, { open:true, startMeasurements:true });
+    }catch(e){ handleErr(e); return; }
+
+    // 이미 연결된 기기면 무시
+    if(devices.indexOf(gdx) !== -1) return;
+    devices.push(gdx);
+    gdx._via = via;
+
+    // 기본 센서가 꺼져 있으면 켜기
+    var enabled = gdx.sensors.filter(function(s){return s.enabled;});
+    if(enabled.length===0 && typeof gdx.enableDefaultSensors==="function"){
+      try{ gdx.enableDefaultSensors(); }catch(e){}
+      enabled = gdx.sensors.filter(function(s){return s.enabled;});
+    }
+    try{ if(typeof gdx.start==="function") gdx.start(500); }catch(e){}
+
+    gdx.on("device-closed", function(){ removeDevice(gdx); });
+
+    enabled.forEach(function(sensor){
+      makeCard(gdx, sensor);
+      sensor.on("value-changed", function(s){ onValue(gdx, s); });
+    });
+    updateCount();
+  }
+
+  function devLabel(gdx){
+    var nm = gdx.name || "Go Direct";
+    return nm + (gdx._via? " · "+gdx._via : "");
+  }
+
+  function makeCard(gdx, sensor){
+    var di = devices.indexOf(gdx);
+    var key = di + ":" + sensor.number;
+    if(cards.has(key)) return;
+    var color = COLORS[colorIdx++ % COLORS.length];
+
+    var el = document.createElement("div");
+    el.className = "sensor";
+    el.innerHTML =
+      '<div class="swatch" style="background:'+color+'"></div>'+
+      '<div class="dev">'+esc(devLabel(gdx))+'</div>'+
+      '<div class="name">'+esc(sensor.name||("센서 "+sensor.number))+'</div>'+
+      '<div><span class="val">—</span><span class="unit">'+esc(sensor.unit||"")+'</span></div>'+
+      '<canvas width="240" height="56"></canvas>';
+    $("cards").appendChild(el);
+
+    cards.set(key, {
+      el: el,
+      valEl: el.querySelector(".val"),
+      canvas: el.querySelector("canvas"),
+      hist: [],
+      color: color,
+      sensor: sensor,
+      gdx: gdx,
+      name: sensor.name || ("센서 "+sensor.number),
+      unit: sensor.unit || ""
+    });
+  }
+
+  function onValue(gdx, sensor){
+    var di = devices.indexOf(gdx);
+    var c = cards.get(di+":"+sensor.number);
+    if(!c) return;
+    var v = sensor.value;
+    c.valEl.textContent = round(v);
+    if(isFinite(v)){
+      c.hist.push(v);
+      if(c.hist.length>120) c.hist.shift();
+      drawSpark(c);
+    }
+    if(recording) recSample();
+  }
+
+  function drawSpark(c){
+    var cv=c.canvas, ctx=cv.getContext("2d");
+    var W=cv.width, H=cv.height, h=c.hist;
+    ctx.clearRect(0,0,W,H);
+    if(h.length<2) return;
+    var min=Math.min.apply(null,h), max=Math.max.apply(null,h);
+    if(min===max){ min-=1; max+=1; }
+    var pad=6;
+    ctx.beginPath();
+    for(var i=0;i<h.length;i++){
+      var x=pad + i*(W-2*pad)/(h.length-1);
+      var y=H-pad - (h[i]-min)/(max-min)*(H-2*pad);
+      if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.strokeStyle=c.color; ctx.lineWidth=2; ctx.lineJoin="round"; ctx.stroke();
+  }
+
+  function removeDevice(gdx){
+    var di = devices.indexOf(gdx);
+    if(di===-1) return;
+    // 카드 제거
+    Array.from(cards.keys()).forEach(function(key){
+      if(key.indexOf(di+":")===0){ var c=cards.get(key); if(c && c.el && c.el.parentNode) c.el.parentNode.removeChild(c.el); cards.delete(key); }
+    });
+    devices.splice(di,1);
+    // di 이후 카드 key가 어긋나므로 전체 재구성
+    rebuildCards();
+    updateCount();
+  }
+
+  function rebuildCards(){
+    $("cards").innerHTML=""; cards.clear(); colorIdx=0;
+    devices.forEach(function(gdx){
+      gdx.sensors.filter(function(s){return s.enabled;}).forEach(function(sensor){ makeCard(gdx,sensor); });
+    });
+  }
+
+  async function disconnectAll(){
+    var copy = devices.slice();
+    for(var i=0;i<copy.length;i++){ try{ await copy[i].close(); }catch(e){} }
+    devices=[]; rebuildCards(); updateCount();
+  }
+
+  // ── 기록(스냅샷 + 자동) ──
+  var rows = [];              // {label, time, values:{key:val}}
+  var recording=false, recTimer=null, recStart=0, lastAutoLabel=0;
+
+  function currentSensors(){
+    var list=[];
+    devices.forEach(function(gdx){
+      var di=devices.indexOf(gdx);
+      gdx.sensors.filter(function(s){return s.enabled;}).forEach(function(sensor){
+        var c=cards.get(di+":"+sensor.number);
+        list.push({ key:c? (c.name+"("+c.unit+")") : sensor.name, val: sensor.value });
+      });
+    });
+    return list;
+  }
+  function colKeys(){
+    var keys=[]; var seen={};
+    currentSensors().forEach(function(s){ if(!seen[s.key]){ seen[s.key]=1; keys.push(s.key); } });
+    return keys;
+  }
+  function rebuildTableHead(){
+    var thead=$("recTable").querySelector("thead");
+    var keys=colKeys();
+    thead.innerHTML = "<tr><th>이름표</th><th>시각</th>"+keys.map(function(k){return "<th>"+esc(k)+"</th>";}).join("")+"</tr>";
+    renderRows();
+  }
+  function renderRows(){
+    var keys=colKeys();
+    var tb=$("recTable").querySelector("tbody");
+    tb.innerHTML = rows.map(function(r){
+      return "<tr><td>"+esc(r.label||"")+"</td><td>"+esc(r.time)+"</td>"+
+        keys.map(function(k){ var v=r.values[k]; return "<td>"+(v==null||!isFinite(v)?"—":round(v))+"</td>"; }).join("")+"</tr>";
+    }).join("");
+  }
+  function nowStr(){ var d=new Date(); return [d.getHours(),d.getMinutes(),d.getSeconds()].map(function(n){return (n<10?"0":"")+n;}).join(":"); }
+  function snapshot(auto){
+    var vals={}; currentSensors().forEach(function(s){ vals[s.key]=s.val; });
+    var label = auto? "" : ($("label").value||"");
+    rows.push({ label:label, time:nowStr(), values:vals });
+    renderRows();
+  }
+  function recSample(){
+    // 자동 기록 시 최대 2Hz로 저장
+    var t=Date.now(); if(t-lastAutoLabel<450) return; lastAutoLabel=t;
+    var sec=Math.round((t-recStart)/1000);
+    var vals={}; currentSensors().forEach(function(s){ vals[s.key]=s.val; });
+    rows.push({ label:"+"+sec+"초", time:nowStr(), values:vals });
+    renderRows();
+  }
+  function toggleRec(){
+    recording=!recording;
+    var b=$("recToggle"), tm=$("timer");
+    if(recording){
+      recStart=Date.now(); lastAutoLabel=0; b.textContent="⏹ 자동 기록 정지"; tm.style.display="inline"; tm.textContent="00:00";
+      recTimer=setInterval(function(){ var s=Math.round((Date.now()-recStart)/1000); tm.textContent=(s<600?"0":"")+Math.floor(s/60)+":"+((s%60)<10?"0":"")+(s%60); },500);
+    }else{
+      b.textContent="▶ 자동 기록 시작"; tm.style.display="none"; clearInterval(recTimer);
+    }
+  }
+  function csv(){
+    var keys=colKeys();
+    var head=["이름표","시각"].concat(keys);
+    var esc2=function(v){ return '"'+String(v==null?"":v).replace(/"/g,'""')+'"'; };
+    var body=rows.map(function(r){ return [esc2(r.label),esc2(r.time)].concat(keys.map(function(k){ var v=r.values[k]; return esc2(v==null||!isFinite(v)?"":round(v)); })).join(","); });
+    var blob=new Blob(["﻿"+head.map(esc2).join(",")+"\n"+body.join("\n")],{type:"text/csv;charset=utf-8"});
+    var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="vernier_sensor.csv"; a.click();
+  }
+  async function copyTable(){
+    var keys=colKeys();
+    var lines=[["이름표","시각"].concat(keys).join("\t")];
+    rows.forEach(function(r){ lines.push([r.label,r.time].concat(keys.map(function(k){var v=r.values[k];return v==null||!isFinite(v)?"":round(v);})).join("\t")); });
+    try{ await navigator.clipboard.writeText(lines.join("\n")); $("copyMsg").textContent="표를 복사했어요. 스프레드시트나 ARGO에 붙여넣기 하세요."; }
+    catch(e){ $("copyMsg").textContent="복사가 안 되어요. CSV 저장을 이용하세요."; }
+  }
+
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(m){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m];}); }
+
+  function help(){
+    showNotice(
+      "<b>📖 사용 방법</b><br>"+
+      "1) Go Direct 센서를 <b>USB 케이블</b>로 웨일북에 연결하고 전원을 켜요.<br>"+
+      "2) <b>🔌 USB 센서 연결</b>을 누르고, 목록에서 센서(GDX-…)를 골라요. 센서마다 한 번씩(최대 4개).<br>"+
+      "3) 값이 큰 숫자로 실시간 표시돼요. 아래 <b>값 기록</b>에서 이름표(예: 29°)를 적고 <b>📸 지금 값 기록</b>을 누르면 표에 저장돼요.<br>"+
+      "4) 온도 상승처럼 시간에 따른 변화는 <b>▶ 자동 기록</b>으로 60초 동안 값을 모을 수 있어요.<br>"+
+      "5) <b>CSV 저장</b>/<b>복사</b>로 값을 내보내 ARGO에 입력하세요.<br><br>"+
+      "<span class='muted' style='font-size:12px'>※ 이 페이지는 <b>https:// 주소</b>에서, 크롬 계열 브라우저(웨일 포함)로 열어야 USB(WebHID)가 동작합니다. 관리형 기기는 정책으로 막혀 있을 수 있어요.</span>",
+      false
+    );
+  }
+
+  // 초기 지원 여부 안내
+  function initNotice(){
+    if(!("hid" in navigator) && !navigator.bluetooth){
+      showNotice("<b>⚠️ 이 브라우저에서는 센서 연결(USB/블루투스)이 지원되지 않아요.</b><br>"+
+        "크롬 계열 브라우저(Chrome·Edge·<b>웨일</b>)에서 <b>https:// 주소</b>로 열어 주세요.", true);
+    }else if(location.protocol!=="https:" && location.hostname!=="localhost" && location.protocol!=="file:"){
+      showNotice("ℹ️ USB/블루투스 연결은 <b>https</b> 주소에서만 동작해요. 지금 주소가 http라면 https로 열어 주세요.", false);
+    }
+  }
+
+  // 이벤트
+  $("connectUsb").addEventListener("click", connectUsb);
+  $("connectBt").addEventListener("click", connectBt);
+  $("disconnectAll").addEventListener("click", disconnectAll);
+  $("snapshot").addEventListener("click", function(){ snapshot(false); });
+  $("recToggle").addEventListener("click", toggleRec);
+  $("clearRows").addEventListener("click", function(){ rows=[]; renderRows(); });
+  $("csv").addEventListener("click", csv);
+  $("copy").addEventListener("click", copyTable);
+  $("help").addEventListener("click", help);
+
+  if(typeof godirect==="undefined"){
+    showNotice("<b>센서 라이브러리를 불러오지 못했어요.</b><br>godirect.min.umd.js 파일이 같은 폴더에 있는지 확인하세요.", true);
+  }
+  initNotice();
+})();
+</script>
+</body>
+</html>
