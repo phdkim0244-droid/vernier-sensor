@@ -137,6 +137,18 @@
     </div>
     <div class="muted mt" style="font-size:12px" id="copyMsg"></div>
   </div>
+
+  <!-- 그래프 -->
+  <div class="card mt" id="graphCard" style="display:none">
+    <div class="row" style="justify-content:space-between">
+      <b style="font-size:16px">📈 그래프</b>
+      <button class="btn small" id="graphToggle">📊 그래프 그리기</button>
+    </div>
+    <div id="graphBody" style="display:none">
+      <div id="graphControls" class="mt"></div>
+      <div id="graphOut" class="mt"></div>
+    </div>
+  </div>
 </main>
 
 <footer>
@@ -172,6 +184,7 @@
     $("disconnectAll").disabled = devices.length===0;
     $("recordCard").style.display = n>0 ? "block" : "none";
     rebuildTableHead();
+    syncGraphCard();
   }
 
   // ── 연결: USB(WebHID) ──
@@ -278,6 +291,7 @@
     nameInput.addEventListener("input", function(){
       c.name = nameInput.value.trim() || defName;
       rebuildTableHead();
+      if(graph.open){ renderGraphControls(); renderGraphChart(); }
     });
   }
 
@@ -374,6 +388,7 @@
       return "<tr><td>"+esc(r.label||"")+"</td><td>"+esc(r.time)+"</td>"+
         defs.map(function(d){ var v=r.values[d.id]; return "<td>"+(v==null||!isFinite(v)?"—":round(v))+"</td>"; }).join("")+"</tr>";
     }).join("");
+    if(graph.open) renderGraphChart();
   }
   function nowStr(){ var d=new Date(); return [d.getHours(),d.getMinutes(),d.getSeconds()].map(function(n){return (n<10?"0":"")+n;}).join(":"); }
   function snapshot(auto){
@@ -430,6 +445,114 @@
 
   function esc(s){ return String(s).replace(/[&<>"]/g,function(m){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m];}); }
 
+  // ── 그래프 (기록 표를 그래프로) ──
+  var graph = { open:false, type:"line", xKey:"__label__", yKeys:[], layout:"separate" };
+  function gnum(v){ return typeof v==="number"? v : parseFloat(String(v).replace(/,/g,"")); }
+  function graphColColor(id){ var defs=colDefs(); var i=defs.findIndex(function(d){return d.id===id;}); return COLORS[(i<0?0:i)%COLORS.length]; }
+  function ensureY(){
+    var defs=colDefs();
+    graph.yKeys = graph.yKeys.filter(function(id){ return defs.some(function(d){return d.id===id;}); });
+    if(graph.yKeys.length===0 && defs.length) graph.yKeys=[defs[0].id];
+  }
+  function syncGraphCard(){
+    var vis = colDefs().length>0;
+    $("graphCard").style.display = vis? "block":"none";
+    if(!vis) graph.open=false;
+    $("graphBody").style.display = (graph.open && vis)? "block":"none";
+    $("graphToggle").textContent = graph.open? "🔽 그래프 접기":"📊 그래프 그리기";
+    if(graph.open && vis){ renderGraphControls(); renderGraphChart(); }
+  }
+  function renderGraphControls(){
+    ensureY();
+    var defs=colDefs();
+    var xOptions=[{id:"__label__",label:"이름표"}].concat(defs);
+    var multi = graph.yKeys.length>1;
+    var chips = defs.map(function(d){
+      var on=graph.yKeys.indexOf(d.id)!==-1; var color=graphColColor(d.id);
+      return '<button class="btn sec small gy'+(on?" on":"")+'" data-id="'+esc(d.id)+'">'+
+        '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;vertical-align:middle;margin-right:4px;background:'+(on?color:"transparent")+';border:'+(on?"none":"1.5px solid currentColor")+'"></span>'+
+        (on?"✓ ":"")+esc(d.label)+'</button>';
+    }).join(" ");
+    var xsel='<select id="gx" class="btn sec small" style="font-weight:700">'+
+      xOptions.map(function(o){return '<option value="'+esc(o.id)+'"'+(o.id===graph.xKey?" selected":"")+'>'+esc(o.label)+'</option>';}).join("")+'</select>';
+    var layout = multi? ('<div class="row mt"><span class="muted" style="font-size:13px">④ 보기 방식</span>'+
+      '<button class="btn sec small gl'+(graph.layout==="separate"?" on":"")+'" data-l="separate">▥ 따로 그래프</button>'+
+      '<button class="btn sec small gl'+(graph.layout==="overlay"?" on":"")+'" data-l="overlay">▤ 한 그래프에 겹쳐</button>'+
+      '<span class="muted" style="font-size:12px">값 크기가 많이 다르면 따로 그래프가 잘 보여요</span></div>'):"";
+    $("graphControls").innerHTML =
+      '<div class="card" style="border:1px solid var(--line)">'+
+        '<div class="row"><span class="muted" style="font-size:13px">① 종류</span>'+
+          '<button class="btn sec small gt'+(graph.type==="bar"?" on":"")+'" data-t="bar">📊 막대</button>'+
+          '<button class="btn sec small gt'+(graph.type==="line"?" on":"")+'" data-t="line">📈 꺾은선</button></div>'+
+        '<div class="row mt"><span class="muted" style="font-size:13px">② 세로축(↑ 값)</span> '+chips+'</div>'+
+        '<div class="row mt"><span class="muted" style="font-size:13px">③ 가로축(→)</span>'+xsel+'</div>'+
+        layout+'</div>';
+    var q=function(sel){ return $("graphControls").querySelectorAll(sel); };
+    Array.prototype.forEach.call(q(".gt"), function(b){ b.onclick=function(){ graph.type=b.getAttribute("data-t"); renderGraphControls(); renderGraphChart(); }; });
+    Array.prototype.forEach.call(q(".gy"), function(b){ b.onclick=function(){ var id=b.getAttribute("data-id"); var i=graph.yKeys.indexOf(id); if(i!==-1){ if(graph.yKeys.length>1) graph.yKeys.splice(i,1); } else graph.yKeys.push(id); renderGraphControls(); renderGraphChart(); }; });
+    Array.prototype.forEach.call(q(".gl"), function(b){ b.onclick=function(){ graph.layout=b.getAttribute("data-l"); renderGraphControls(); renderGraphChart(); }; });
+    $("gx").onchange=function(){ graph.xKey=$("gx").value; renderGraphControls(); renderGraphChart(); };
+  }
+  function buildSeries(){
+    var defs=colDefs(); var xKey=graph.xKey;
+    var ordered = rows.map(function(r,idx){
+      var xl = xKey==="__label__" ? (r.label||("#"+(idx+1))) : (r.values[xKey]==null?"":String(round(r.values[xKey])));
+      var xn = xKey==="__label__" ? NaN : gnum(r.values[xKey]);
+      return { r:r, xLabel:xl, xNum:xn };
+    });
+    if(xKey!=="__label__") ordered = ordered.filter(function(o){return isFinite(o.xNum);}).sort(function(a,b){return a.xNum-b.xNum;});
+    var series = defs.filter(function(d){return graph.yKeys.indexOf(d.id)!==-1;}).map(function(d){
+      return { id:d.id, label:d.label, color:graphColColor(d.id), points: ordered.map(function(o){ return gnum(o.r.values[d.id]); }) };
+    });
+    return { xLabels: ordered.map(function(o){return o.xLabel;}), series:series };
+  }
+  function barHTML(xLabels, series, maxY){
+    var single=series.length===1;
+    var groups=xLabels.map(function(xl,j){
+      var bars=series.map(function(s){ var v=s.points[j]; var ok=isFinite(v); var h=ok&&maxY>0?Math.max(4,(v/maxY)*100):0;
+        return '<div style="flex:1;border-radius:4px 4px 0 0;height:'+h+'%;background:'+s.color+'" title="'+esc(s.label+" · "+xl+": "+(ok?round(v):"—"))+'"></div>'; }).join("");
+      var vl=single&&isFinite(series[0].points[j])? '<div style="font-size:10px;font-weight:700;color:var(--muted)">'+round(series[0].points[j])+'</div>':'';
+      return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;height:100%">'+
+        '<div style="flex:1;min-height:0;width:100%;display:flex;align-items:flex-end;justify-content:center;gap:2px">'+bars+'</div>'+
+        vl+'<div style="font-size:10px;color:var(--muted);text-align:center;line-height:1.1">'+esc(xl)+'</div></div>';
+    }).join("");
+    return '<div style="display:flex;gap:6px;height:150px">'+groups+'</div>';
+  }
+  function lineHTML(xLabels, series, maxY){
+    var W=320,H=180,padL=10,padR=10,padTop=18,padBot=34,n=xLabels.length;
+    function xP(i){ return n<=1? W/2 : padL + i*(W-padL-padR)/(n-1); }
+    function yP(v){ return H-padBot - (maxY>0? (v/maxY)*(H-padTop-padBot):0); }
+    var single=series.length===1;
+    var polys=series.map(function(s){ var pts=s.points.map(function(v,i){return isFinite(v)? xP(i)+","+yP(v):"";}).filter(Boolean).join(" ");
+      return '<polyline fill="none" stroke="'+s.color+'" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="'+pts+'"/>'; }).join("");
+    var dots=series.map(function(s){ return s.points.map(function(v,i){ if(!isFinite(v))return ""; var lbl=single?'<text x="'+xP(i)+'" y="'+(yP(v)-6)+'" text-anchor="middle" font-size="9" font-weight="bold" fill="currentColor">'+round(v)+'</text>':'';
+      return '<circle cx="'+xP(i)+'" cy="'+yP(v)+'" r="3.5" fill="'+s.color+'"/>'+lbl; }).join(""); }).join("");
+    var xl=xLabels.map(function(x,i){ return '<text x="'+xP(i)+'" y="'+(H-padBot+14)+'" text-anchor="middle" font-size="8.5" fill="currentColor" fill-opacity="0.6">'+esc(x)+'</text>'; }).join("");
+    return '<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;max-height:220px;color:var(--ink)" preserveAspectRatio="xMidYMid meet">'+
+      '<line x1="'+padL+'" y1="'+(H-padBot)+'" x2="'+(W-padR)+'" y2="'+(H-padBot)+'" stroke="currentColor" stroke-opacity="0.25"/>'+polys+dots+xl+'</svg>';
+  }
+  function renderGraphChart(){
+    var out=$("graphOut");
+    if(rows.length===0){ out.innerHTML='<div class="card" style="border:1px dashed var(--line);text-align:center;color:var(--muted)">아직 기록한 값이 없어요. 📸 스냅샷이나 ▶ 자동 기록으로 값을 모아 보세요.</div>'; return; }
+    var bs=buildSeries();
+    if(bs.series.length===0){ out.innerHTML='<div class="card" style="border:1px dashed var(--line);text-align:center;color:var(--muted)">② 세로축에서 볼 값을 하나 이상 골라 주세요.</div>'; return; }
+    var xColLabel = graph.xKey==="__label__"? "이름표" : ((colDefs().find(function(d){return d.id===graph.xKey;})||{label:""}).label);
+    var multi=bs.series.length>1;
+    if(multi && graph.layout==="separate"){
+      out.innerHTML='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">'+
+        bs.series.map(function(s){ var sMax=Math.max.apply(null,s.points.filter(isFinite).concat([0]));
+          return '<div class="card" style="border:1px solid var(--line)">'+
+            '<div style="text-align:center;font-size:12px;font-weight:700;margin-bottom:6px">세로 <span style="color:'+s.color+'">'+esc(s.label)+'</span> · 가로 '+esc(xColLabel)+'</div>'+
+            (graph.type==="bar"? barHTML(bs.xLabels,[s],sMax):lineHTML(bs.xLabels,[s],sMax))+'</div>'; }).join("")+'</div>';
+    } else {
+      var maxY=Math.max.apply(null, bs.series.reduce(function(a,s){return a.concat(s.points.filter(isFinite));},[]).concat([0]));
+      var legend=multi? '<div style="display:flex;flex-wrap:wrap;justify-content:center;gap:12px;font-size:12px;margin-bottom:6px">'+bs.series.map(function(s){return '<span><span style="display:inline-block;width:11px;height:11px;border-radius:3px;background:'+s.color+';vertical-align:middle;margin-right:4px"></span>'+esc(s.label)+'</span>';}).join("")+'</div>':'';
+      out.innerHTML='<div class="card" style="border:1px solid var(--line)">'+
+        '<div style="text-align:center;font-size:12px;font-weight:700;margin-bottom:6px">세로 '+esc(bs.series.map(function(s){return s.label;}).join(" · "))+' · 가로 '+esc(xColLabel)+'</div>'+
+        legend+(graph.type==="bar"? barHTML(bs.xLabels,bs.series,maxY):lineHTML(bs.xLabels,bs.series,maxY))+'</div>';
+    }
+  }
+
   function help(){
     showNotice(
       "<b>📖 사용 방법</b><br>"+
@@ -471,6 +594,7 @@
   $("csv").addEventListener("click", csv);
   $("copy").addEventListener("click", copyTable);
   $("help").addEventListener("click", help);
+  $("graphToggle").addEventListener("click", function(){ graph.open=!graph.open; syncGraphCard(); });
 
   if(typeof godirect==="undefined"){
     showNotice("<b>센서 라이브러리를 불러오지 못했어요.</b><br>godirect.min.umd.js 파일이 같은 폴더에 있는지 확인하세요.", true);
