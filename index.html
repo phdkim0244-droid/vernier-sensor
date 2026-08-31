@@ -54,7 +54,10 @@
   #cards{ display:grid; grid-template-columns:repeat(auto-fill, minmax(240px,1fr)); gap:14px; margin-top:16px; }
   .sensor{ background:var(--card); border:2px solid var(--line); border-radius:18px; padding:14px; position:relative; overflow:hidden; }
   .sensor .dev{ font-size:12px; color:var(--muted); font-weight:700; }
-  .sensor .name{ font-size:15px; font-weight:800; margin-top:2px; }
+  .sensor .name{ font-size:15px; font-weight:800; margin-top:4px; width:100%; border:none; background:transparent; color:var(--ink); border-bottom:1.5px dashed var(--line); padding:2px 0; font-family:inherit; }
+  .sensor .name:hover{ border-bottom-color:var(--accent); }
+  .sensor .name:focus{ outline:none; border-bottom:1.5px solid var(--accent); }
+  .sensor .rename-hint{ font-size:11px; color:var(--muted); }
   .sensor .val{ font-variant-numeric:tabular-nums; font-weight:900; line-height:1; margin:8px 0 2px; font-size:44px; }
   .sensor .unit{ font-size:16px; font-weight:800; color:var(--muted); margin-left:4px; }
   .sensor canvas{ width:100%; height:56px; display:block; margin-top:8px; }
@@ -233,17 +236,19 @@
     if(cards.has(key)) return;
     var color = COLORS[colorIdx++ % COLORS.length];
 
+    var defName = sensor.name || ("센서 "+sensor.number);
     var el = document.createElement("div");
     el.className = "sensor";
     el.innerHTML =
       '<div class="swatch" style="background:'+color+'"></div>'+
       '<div class="dev">'+esc(devLabel(gdx))+'</div>'+
-      '<div class="name">'+esc(sensor.name||("센서 "+sensor.number))+'</div>'+
+      '<div class="rename-hint">이름 (눌러서 바꾸기 ✏️)</div>'+
+      '<input class="name" type="text" value="'+esc(defName)+'" title="센서 이름을 바꿀 수 있어요" />'+
       '<div><span class="val">—</span><span class="unit">'+esc(sensor.unit||"")+'</span></div>'+
       '<canvas width="240" height="56"></canvas>';
     $("cards").appendChild(el);
 
-    cards.set(key, {
+    var c = {
       el: el,
       valEl: el.querySelector(".val"),
       canvas: el.querySelector("canvas"),
@@ -251,8 +256,15 @@
       color: color,
       sensor: sensor,
       gdx: gdx,
-      name: sensor.name || ("센서 "+sensor.number),
+      name: defName,
       unit: sensor.unit || ""
+    };
+    cards.set(key, c);
+
+    var nameInput = el.querySelector("input.name");
+    nameInput.addEventListener("input", function(){
+      c.name = nameInput.value.trim() || defName;
+      rebuildTableHead();
     });
   }
 
@@ -322,34 +334,37 @@
     devices.forEach(function(gdx){
       var di=devices.indexOf(gdx);
       gdx.sensors.filter(function(s){return s.enabled;}).forEach(function(sensor){
-        var c=cards.get(di+":"+sensor.number);
-        list.push({ key:c? (c.name+"("+c.unit+")") : sensor.name, val: sensor.value });
+        var id=di+":"+sensor.number;
+        var c=cards.get(id);
+        var nm=(c? c.name : (sensor.name||("센서 "+sensor.number)));
+        var un=(c? c.unit : (sensor.unit||""));
+        list.push({ id:id, label: nm + (un? "("+un+")" : ""), val: sensor.value });
       });
     });
     return list;
   }
-  function colKeys(){
-    var keys=[]; var seen={};
-    currentSensors().forEach(function(s){ if(!seen[s.key]){ seen[s.key]=1; keys.push(s.key); } });
-    return keys;
+  function colDefs(){
+    var defs=[]; var seen={};
+    currentSensors().forEach(function(s){ if(!seen[s.id]){ seen[s.id]=1; defs.push({ id:s.id, label:s.label }); } });
+    return defs;
   }
   function rebuildTableHead(){
     var thead=$("recTable").querySelector("thead");
-    var keys=colKeys();
-    thead.innerHTML = "<tr><th>이름표</th><th>시각</th>"+keys.map(function(k){return "<th>"+esc(k)+"</th>";}).join("")+"</tr>";
+    var defs=colDefs();
+    thead.innerHTML = "<tr><th>이름표</th><th>시각</th>"+defs.map(function(d){return "<th>"+esc(d.label)+"</th>";}).join("")+"</tr>";
     renderRows();
   }
   function renderRows(){
-    var keys=colKeys();
+    var defs=colDefs();
     var tb=$("recTable").querySelector("tbody");
     tb.innerHTML = rows.map(function(r){
       return "<tr><td>"+esc(r.label||"")+"</td><td>"+esc(r.time)+"</td>"+
-        keys.map(function(k){ var v=r.values[k]; return "<td>"+(v==null||!isFinite(v)?"—":round(v))+"</td>"; }).join("")+"</tr>";
+        defs.map(function(d){ var v=r.values[d.id]; return "<td>"+(v==null||!isFinite(v)?"—":round(v))+"</td>"; }).join("")+"</tr>";
     }).join("");
   }
   function nowStr(){ var d=new Date(); return [d.getHours(),d.getMinutes(),d.getSeconds()].map(function(n){return (n<10?"0":"")+n;}).join(":"); }
   function snapshot(auto){
-    var vals={}; currentSensors().forEach(function(s){ vals[s.key]=s.val; });
+    var vals={}; currentSensors().forEach(function(s){ vals[s.id]=s.val; });
     var label = auto? "" : ($("label").value||"");
     rows.push({ label:label, time:nowStr(), values:vals });
     renderRows();
@@ -358,7 +373,7 @@
     // 자동 기록 시 최대 2Hz로 저장
     var t=Date.now(); if(t-lastAutoLabel<450) return; lastAutoLabel=t;
     var sec=Math.round((t-recStart)/1000);
-    var vals={}; currentSensors().forEach(function(s){ vals[s.key]=s.val; });
+    var vals={}; currentSensors().forEach(function(s){ vals[s.id]=s.val; });
     rows.push({ label:"+"+sec+"초", time:nowStr(), values:vals });
     renderRows();
   }
@@ -373,17 +388,17 @@
     }
   }
   function csv(){
-    var keys=colKeys();
-    var head=["이름표","시각"].concat(keys);
+    var defs=colDefs();
+    var head=["이름표","시각"].concat(defs.map(function(d){return d.label;}));
     var esc2=function(v){ return '"'+String(v==null?"":v).replace(/"/g,'""')+'"'; };
-    var body=rows.map(function(r){ return [esc2(r.label),esc2(r.time)].concat(keys.map(function(k){ var v=r.values[k]; return esc2(v==null||!isFinite(v)?"":round(v)); })).join(","); });
+    var body=rows.map(function(r){ return [esc2(r.label),esc2(r.time)].concat(defs.map(function(d){ var v=r.values[d.id]; return esc2(v==null||!isFinite(v)?"":round(v)); })).join(","); });
     var blob=new Blob(["﻿"+head.map(esc2).join(",")+"\n"+body.join("\n")],{type:"text/csv;charset=utf-8"});
     var a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="vernier_sensor.csv"; a.click();
   }
   async function copyTable(){
-    var keys=colKeys();
-    var lines=[["이름표","시각"].concat(keys).join("\t")];
-    rows.forEach(function(r){ lines.push([r.label,r.time].concat(keys.map(function(k){var v=r.values[k];return v==null||!isFinite(v)?"":round(v);})).join("\t")); });
+    var defs=colDefs();
+    var lines=[["이름표","시각"].concat(defs.map(function(d){return d.label;})).join("\t")];
+    rows.forEach(function(r){ lines.push([r.label,r.time].concat(defs.map(function(d){var v=r.values[d.id];return v==null||!isFinite(v)?"":round(v);})).join("\t")); });
     try{ await navigator.clipboard.writeText(lines.join("\n")); $("copyMsg").textContent="표를 복사했어요. 스프레드시트나 ARGO에 붙여넣기 하세요."; }
     catch(e){ $("copyMsg").textContent="복사가 안 되어요. CSV 저장을 이용하세요."; }
   }
