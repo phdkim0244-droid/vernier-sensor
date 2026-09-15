@@ -225,6 +225,10 @@
         <button class="btn sec small gs" data-s="normal">보통</button>
         <button class="btn sec small gs" data-s="large">크게</button>
         <button class="btn sec small" id="gFull">⛶ 전체 화면</button>
+        <span style="width:6px"></span>
+        <span class="muted" style="font-size:13px">📏 세로축</span>
+        <button class="btn sec small gr" data-r="zero">0부터</button>
+        <button class="btn sec small gr" data-r="auto">자동 범위</button>
         <button class="btn small" id="gPng" style="margin-left:auto">🖼 이미지 저장</button>
       </div>
       <div class="muted" style="font-size:12px;margin-top:6px" id="graphMsg"></div>
@@ -490,7 +494,8 @@
   }
 
   // ── 색 미리보기 카드 (빨강·초록·파랑 채널이 있는 기기) ──
-  var colorCards = new Map();   // gdx → {el, dot, rgb, hint}
+  var colorCards = new Map();   // gdx → {el, dot, rgb, hint, set, clear}
+  function wbKey(gdx){ return "vs.wb."+String(gdx.orderCode||gdx.name||"godirect").trim(); }   // 흰색 기준(기기 종류별)
   function ensureColorCard(gdx){
     var cs=colorSensors(gdx); if(!cs) return;
     var cc=colorCards.get(gdx);
@@ -501,9 +506,20 @@
         '<div class="dev">'+esc(devLabel(gdx))+'</div>'+
         '<div class="rename-hint">빨강·초록·파랑 세 값을 섞은 색</div>'+
         '<div style="font-size:15px;font-weight:800;margin-top:4px">🎨 색 미리보기</div>'+
-        '<div class="cprev"><div class="cdot"></div><div class="ctxt"><div class="crgb"></div><div class="chint muted"></div></div></div>';
-      cc={ el:el, dot:el.querySelector(".cdot"), rgb:el.querySelector(".crgb"), hint:el.querySelector(".chint") };
+        '<div class="cprev"><div class="cdot"></div><div class="ctxt"><div class="crgb"></div><div class="chint muted"></div></div></div>'+
+        '<div class="row" style="margin-top:10px;gap:6px"><button class="btn sec small wbset" title="흰 종이에 센서를 대고 누르세요">⚪ 흰색 기준 맞추기</button>'+
+        '<button class="btn sec small wbclear" style="display:none">↺ 기준 해제</button></div>';
+      cc={ el:el, dot:el.querySelector(".cdot"), rgb:el.querySelector(".crgb"), hint:el.querySelector(".chint"),
+           set:el.querySelector(".wbset"), clear:el.querySelector(".wbclear") };
       colorCards.set(gdx, cc);
+      cc.set.onclick=function(){
+        var cs2=colorSensors(gdx); if(!cs2) return;
+        var ref={ r:cs2.r.value, g:cs2.g.value, b:cs2.b.value };
+        if(!isFinite(ref.r)||!isFinite(ref.g)||!isFinite(ref.b)||Math.min(ref.r,ref.g,ref.b)<=0){ cc.hint.textContent="세 채널 값이 모두 들어온 뒤(0보다 클 때) 눌러 주세요."; return; }
+        try{ localStorage.setItem(wbKey(gdx), JSON.stringify(ref)); }catch(e){}
+        updateColorCard(gdx);
+      };
+      cc.clear.onclick=function(){ try{ localStorage.removeItem(wbKey(gdx)); }catch(e){} updateColorCard(gdx); };
     }
     $("cards").appendChild(cc.el);   // 항상 그 기기 카드들 뒤(맨 끝)에
   }
@@ -518,13 +534,17 @@
     }
     var v={ r:cs.r.value, g:cs.g.value, b:cs.b.value };
     if(!isFinite(v.r)||!isFinite(v.g)||!isFinite(v.b)){ cc.hint.textContent="값을 기다리는 중…"; return; }
+    var ref=null; try{ ref=JSON.parse(localStorage.getItem(wbKey(gdx))||"null"); }catch(e){}
+    if(ref && ref.r>0 && ref.g>0 && ref.b>0){ v={ r:v.r/ref.r, g:v.g/ref.g, b:v.b/ref.b }; }   // 흰색 기준으로 나눠 센서 감도 차이를 없앰
+    cc.clear.style.display = ref? "inline-block":"none";
+    cc.set.textContent = ref? "⚪ 흰색 기준 다시 맞추기" : "⚪ 흰색 기준 맞추기";
     var mx=Math.max(v.r,v.g,v.b,1e-9);
     var to=function(x){ return Math.round(255*Math.pow(Math.max(0,x)/mx, 1/2.2)); };   // 비율 → 화면색(감마 보정)
     var R=to(v.r), G=to(v.g), B=to(v.b);
     var top=COLOR_CH.reduce(function(a,c){ return v[c.key]>v[a.key]? c : a; });
     cc.dot.style.background="rgb("+R+","+G+","+B+")";
     cc.rgb.innerHTML="<b>가장 센 빛: "+top.ko+"</b><br><span class='muted'>R "+R+" · G "+G+" · B "+B+"</span>";
-    cc.hint.textContent="세 값의 비율로 만든 색이에요 (밝기는 뺀 색)";
+    cc.hint.textContent= ref? "흰색 기준 적용 중 · 세 값의 비율로 만든 색(밝기 제외)" : "세 값의 비율로 만든 색이에요 (밝기 제외). 파랑이 늘 세면 흰 종이에 대고 ⚪ 기준을 맞춰 보세요.";
   }
 
   function drawSpark(c){
@@ -707,9 +727,9 @@
   function esc(s){ return String(s).replace(/[&<>"]/g,function(m){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m];}); }
 
   // ── 그래프 (기록 표를 그래프로) ──
-  var graph = { open:false, type:"line", xKey:"__label__", yKeys:[], layout:"separate", vals:"auto", size:"normal" };
-  try{ var gp=JSON.parse(localStorage.getItem("vs.graph")||"{}"); if(gp.vals) graph.vals=gp.vals; if(gp.size) graph.size=gp.size; }catch(e){}
-  function saveGraphPrefs(){ try{ localStorage.setItem("vs.graph", JSON.stringify({ vals:graph.vals, size:graph.size })); }catch(e){} }
+  var graph = { open:false, type:"line", xKey:"__label__", yKeys:[], layout:"separate", vals:"auto", size:"normal", yRange:"zero" };
+  try{ var gp=JSON.parse(localStorage.getItem("vs.graph")||"{}"); if(gp.vals) graph.vals=gp.vals; if(gp.size) graph.size=gp.size; if(gp.yRange) graph.yRange=gp.yRange; }catch(e){}
+  function saveGraphPrefs(){ try{ localStorage.setItem("vs.graph", JSON.stringify({ vals:graph.vals, size:graph.size, yRange:graph.yRange })); }catch(e){} }
   var modalOpen=false;
   var EXPORT_THEME={ ink:"#0f172a", muted:"#64748b", line:"#e2e8f0", bg:"#ffffff" };   // 이미지 저장용(항상 흰 배경)
   function themeColors(){
@@ -765,6 +785,7 @@
   function renderGraphTools(){
     Array.prototype.forEach.call(document.querySelectorAll("#graphTools .gv"), function(b){ b.classList.toggle("on", b.getAttribute("data-v")===graph.vals); });
     Array.prototype.forEach.call(document.querySelectorAll("#graphTools .gs"), function(b){ b.classList.toggle("on", b.getAttribute("data-s")===graph.size); });
+    Array.prototype.forEach.call(document.querySelectorAll("#graphTools .gr"), function(b){ b.classList.toggle("on", b.getAttribute("data-r")===graph.yRange); });
   }
   function buildSeries(){
     var defs=colDefs(); var xKey=graph.xKey;
@@ -805,7 +826,7 @@
         '<div style="text-align:center;font-size:12px;font-weight:700;margin-bottom:6px">'+titleHTML(c)+'</div>'+
         (c.legend? legendHTML(c.series):"")+
         '<div class="gchart '+size+'"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+d.W+' '+d.H+'" '+SVG_FONT+'>'+
-          chartSVG(c.xLabels, c.series, { W:d.W, H:d.H, type:graph.type, vals:graph.vals, theme:t })+'</svg></div></div>';
+          chartSVG(c.xLabels, c.series, { W:d.W, H:d.H, type:graph.type, vals:graph.vals, yAuto:graph.yRange==="auto", theme:t })+'</svg></div></div>';
     }).join("")+'</div>';
   }
   // 세로축 눈금 간격을 보기 좋은 수(1·2·2.5·5·10 배수)로
@@ -817,7 +838,11 @@
     var fs=Math.round(9*Math.sqrt(W/320));                     // 글자 크기: 그래프가 커질수록 조금씩
     var all=[]; series.forEach(function(s){ s.points.forEach(function(v){ if(isFinite(v)) all.push(v); }); });
     var dMin=all.length? Math.min.apply(null,all):0, dMax=all.length? Math.max.apply(null,all):0;
-    var lo=Math.min(0,dMin), hi=Math.max(0,dMax); if(hi-lo<=0) hi=lo+1;
+    var lo, hi;
+    if(opt.yAuto){   // 자동 범위: 값이 있는 구간만 (위아래 10% 여유) → 변화폭이 작아도 크게 보임
+      var span=dMax-dMin; if(span<=0) span=Math.max(Math.abs(dMax)*0.1, 1);
+      lo=dMin-span*0.1; hi=dMax+span*0.1;
+    } else { lo=Math.min(0,dMin); hi=Math.max(0,dMax); if(hi-lo<=0) hi=lo+1; }
     var step=niceStep(hi-lo); lo=Math.floor(lo/step)*step; hi=Math.ceil(hi/step)*step; if(hi<=lo) hi=lo+step;
     var ticks=[]; for(var k=0; lo+k*step<=hi+step/2; k++) ticks.push(Math.round((lo+k*step)/step)*step);
     var tickLen=Math.max.apply(null, ticks.map(function(v){return fmtTick(v).length;}));
@@ -841,8 +866,9 @@
     ticks.forEach(function(tv){ var y=yP(tv).toFixed(1);
       out.push('<line x1="'+padL+'" y1="'+y+'" x2="'+(W-padR)+'" y2="'+y+'" stroke="'+t.line+'" stroke-width="1"/>'+
         '<text x="'+(padL-fs*0.5)+'" y="'+(+y+fs*0.35)+'" text-anchor="end" font-size="'+fs+'" fill="'+t.muted+'">'+fmtTick(tv)+'</text>'); });
-    var y0=yP(Math.max(lo,Math.min(hi,0))).toFixed(1);
-    out.push('<line x1="'+padL+'" y1="'+y0+'" x2="'+(W-padR)+'" y2="'+y0+'" stroke="'+t.ink+'" stroke-opacity="0.35"/>');
+    var y0=yP(Math.max(lo,Math.min(hi,0))).toFixed(1);   // 0 기준선(범위 밖이면 가장자리)
+    if(lo<=0 && hi>=0) out.push('<line x1="'+padL+'" y1="'+y0+'" x2="'+(W-padR)+'" y2="'+y0+'" stroke="'+t.ink+'" stroke-opacity="0.35"/>');
+    if(opt.yAuto && type==="bar") y0=(padTop+plotH).toFixed(1);   // 자동 범위 막대는 바닥에서 시작
     out.push('<line x1="'+padL+'" y1="'+padTop+'" x2="'+padL+'" y2="'+(padTop+plotH)+'" stroke="'+t.ink+'" stroke-opacity="0.25"/>');
     var multi=series.length>1;
     var tip=function(s,i,v){ return '<title>'+esc(s.label+" · "+xLabels[i]+": "+round(v))+'</title>'; };
@@ -911,7 +937,7 @@
         y+=28;
       }
       parts.push('<svg x="'+pad+'" y="'+y+'" width="'+(W-2*pad)+'" height="'+CH+'" viewBox="0 0 '+(W-2*pad)+' '+CH+'">'+
-        chartSVG(c.xLabels, c.series, { W:W-2*pad, H:CH, type:graph.type, vals:graph.vals, theme:t })+'</svg>');
+        chartSVG(c.xLabels, c.series, { W:W-2*pad, H:CH, type:graph.type, vals:graph.vals, yAuto:graph.yRange==="auto", theme:t })+'</svg>');
       y+=CH+20;
     });
     y+=pad-20;
@@ -938,10 +964,10 @@
       "<b>📖 사용 방법</b><br>"+
       "1) Go Direct 센서를 <b>USB 케이블</b>로 웨일북에 연결하고 전원을 켜요.<br>"+
       "2) <b>🔌 USB 센서 연결</b>을 누르고, 목록에서 센서(GDX-…)를 골라요. 센서마다 한 번씩. 개수 제한은 없지만 <b>USB 허브로 8개 안팎</b>, 블루투스는 <b>4개 이내</b>를 권해요.<br>"+
-      "2-1) 조도·색도 센서처럼 잴 수 있는 값이 여러 개인 기기는 <b>📡 채널 선택</b>에서 조도·빨강·초록·파랑·UVA·UVB 등을 켜고 끌 수 있어요. 선택은 기기 종류별로 기억돼요.<br>"+
+      "2-1) 조도·색도 센서처럼 잴 수 있는 값이 여러 개인 기기는 <b>📡 채널 선택</b>에서 조도·빨강·초록·파랑·UVA·UVB 등을 켜고 끌 수 있어요. 선택은 기기 종류별로 기억돼요. 🎨 색 미리보기에서 파랑이 늘 세게 나오면 <b>흰 종이에 센서를 대고 ⚪ 흰색 기준 맞추기</b>를 누르세요.<br>"+
       "3) 값이 큰 숫자로 실시간 표시돼요. 아래 <b>값 기록</b>에서 이름표(예: 29°)를 적고 <b>📸 지금 값 기록</b>을 누르면 표에 저장돼요.<br>"+
       "4) 온도 상승처럼 시간에 따른 변화는 <b>▶ 자동 기록</b>으로 모아요. <b>⏱ 간격</b>(몇 초마다)과 <b>⏳ 측정 시간</b>(얼마 동안)을 정하면 시간이 다 됐을 때 저절로 멈춰요.<br>"+
-      "5) <b>📈 그래프</b>에서 종류·축을 고르고, <b>🔢 값 표시</b>(자동/모두/숨김)·<b>📐 크기</b>·<b>⛶ 전체 화면</b>으로 보기 좋게 조절해요. <b>🖼 이미지 저장</b>을 누르면 그래프가 PNG 그림 파일로 저장돼요.<br>"+
+      "5) <b>📈 그래프</b>에서 종류·축을 고르고, <b>🔢 값 표시</b>(자동/모두/숨김)·<b>📐 크기</b>·<b>⛶ 전체 화면</b>·<b>📏 세로축 자동 범위</b>(변화가 작아도 크게 보임)로 보기 좋게 조절해요. <b>🖼 이미지 저장</b>을 누르면 그래프가 PNG 그림 파일로 저장돼요.<br>"+
       "6) <b>CSV 저장</b>/<b>복사</b>로 값을 내보내 ARGO에 입력하세요.<br><br>"+
       "<span class='muted' style='font-size:12px'>※ 이 페이지는 <b>https:// 주소</b>에서, 크롬 계열 브라우저(웨일 포함)로 열어야 USB(WebHID)가 동작합니다. 관리형 기기는 정책으로 막혀 있을 수 있어요.</span>",
       false
@@ -990,6 +1016,9 @@
   });
   Array.prototype.forEach.call(document.querySelectorAll("#graphTools .gs"), function(b){
     b.addEventListener("click", function(){ graph.size=b.getAttribute("data-s"); saveGraphPrefs(); renderGraphTools(); renderGraphChart(); });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll("#graphTools .gr"), function(b){
+    b.addEventListener("click", function(){ graph.yRange=b.getAttribute("data-r"); saveGraphPrefs(); renderGraphTools(); renderGraphChart(); });
   });
   $("gFull").addEventListener("click", openModal);
   $("gmClose").addEventListener("click", closeModal);
