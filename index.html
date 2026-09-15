@@ -72,6 +72,10 @@
   .chip{ appearance:none; cursor:pointer; border:2px solid var(--line); background:transparent; color:var(--ink); border-radius:999px; padding:5px 12px; font-size:13px; font-weight:700; font-family:inherit; }
   .chip.on{ background:var(--accent); border-color:var(--accent); color:#04302b; }
   .chip:disabled{ opacity:.5; cursor:wait; }
+  .cprev{ display:flex; align-items:center; gap:12px; margin-top:10px; }
+  .cdot{ width:68px; height:68px; border-radius:50%; border:3px solid var(--line); flex-shrink:0; box-shadow:inset 0 0 0 2px #fff; background:transparent; transition:background .3s; }
+  .ctxt{ font-size:13px; line-height:1.45; }
+  .ctxt b{ font-size:15px; }
 
   table{ width:100%; border-collapse:collapse; font-size:14px; }
   th,td{ border:1px solid var(--line); padding:6px 8px; text-align:center; white-space:nowrap; }
@@ -263,6 +267,21 @@
   var GDX_SERVICE = "d91714ef-28b9-4f91-ba16-f0d9a604f112";   // Go Direct 블루투스 서비스
   var COLORS = ["#0d9488","#f59e0b","#7c3aed","#3b82f6","#ec4899","#059669","#ea580c","#0ea5e9","#a21caf","#65a30d","#dc2626","#0369a1"];
 
+  // 색도 채널: 기기는 파장 이름(615/525/465 nm)으로 알려 주므로 색 이름을 붙여 보여 줌
+  var COLOR_CH = [ {key:"r", re:/615/, name:"빨강 (615 nm)", ko:"빨강"}, {key:"g", re:/525/, name:"초록 (525 nm)", ko:"초록"}, {key:"b", re:/465/, name:"파랑 (465 nm)", ko:"파랑"} ];
+  function isNm(sensor){ return /nm/i.test(String(sensor.name||"")); }
+  function friendlyName(sensor){
+    var n=String(sensor.name||"").trim();
+    for(var i=0;i<COLOR_CH.length;i++){ if(isNm(sensor) && COLOR_CH[i].re.test(n)) return COLOR_CH[i].name; }
+    if(/^(light|illuminance)$/i.test(n)) return "조도";
+    return n || ("센서 "+sensor.number);
+  }
+  function colorSensors(gdx){
+    var out={};
+    COLOR_CH.forEach(function(c){ out[c.key]=gdx.sensors.filter(function(s){ return isNm(s) && c.re.test(String(s.name||"")); })[0]; });
+    return (out.r&&out.g&&out.b)? out : null;
+  }
+
   var devices = [];       // godirect Device 목록
   var cards = new Map();   // key: devIndex+':'+sensorNumber → {el, valEl, canvas, hist:[], color, sensor}
   var colorIdx = 0;
@@ -283,6 +302,7 @@
     $("disconnectAll").disabled = devices.length===0;
     $("recordCard").style.display = n>0 ? "block" : "none";
     $("cards").classList.toggle("dense", n>8);
+    devices.forEach(function(g){ ensureColorCard(g); updateColorCard(g); });
     renderChannels();
     rebuildTableHead();
     syncGraphCard();
@@ -386,7 +406,7 @@
         gdx.sensors.map(function(s){
           var c=cards.get(di+":"+s.number);
           var dot = s.enabled? '<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+(c?c.color:"#04302b")+';margin-right:5px;vertical-align:middle;border:1.5px solid rgba(255,255,255,.7)"></span>' : '';
-          return '<button class="chip'+(s.enabled?" on":"")+'" data-di="'+di+'" data-n="'+s.number+'">'+dot+esc(s.name||("채널 "+s.number))+(s.unit? ' <span style="opacity:.75">('+esc(s.unit)+')</span>':'')+'</button>';
+          return '<button class="chip'+(s.enabled?" on":"")+'" data-di="'+di+'" data-n="'+s.number+'">'+dot+esc(friendlyName(s))+(s.unit? ' <span style="opacity:.75">('+esc(s.unit)+')</span>':'')+'</button>';
         }).join("")+'</div>';
     }).join("");
     Array.prototype.forEach.call($("chList").querySelectorAll(".chip"), function(b){
@@ -422,7 +442,7 @@
     if(cards.has(key)) return;
     var color = COLORS[colorIdx++ % COLORS.length];
 
-    var defName = sensor.name || ("센서 "+sensor.number);
+    var defName = friendlyName(sensor);
     var el = document.createElement("div");
     el.className = "sensor";
     el.innerHTML =
@@ -466,6 +486,45 @@
       if(c.hist.length>120) c.hist.shift();
       drawSpark(c);
     }
+    if(isNm(sensor)) updateColorCard(gdx);
+  }
+
+  // ── 색 미리보기 카드 (빨강·초록·파랑 채널이 있는 기기) ──
+  var colorCards = new Map();   // gdx → {el, dot, rgb, hint}
+  function ensureColorCard(gdx){
+    var cs=colorSensors(gdx); if(!cs) return;
+    var cc=colorCards.get(gdx);
+    if(!cc){
+      var el=document.createElement("div"); el.className="sensor";
+      el.innerHTML =
+        '<div class="swatch" style="background:linear-gradient(90deg,#ef4444,#22c55e,#3b82f6)"></div>'+
+        '<div class="dev">'+esc(devLabel(gdx))+'</div>'+
+        '<div class="rename-hint">빨강·초록·파랑 세 값을 섞은 색</div>'+
+        '<div style="font-size:15px;font-weight:800;margin-top:4px">🎨 색 미리보기</div>'+
+        '<div class="cprev"><div class="cdot"></div><div class="ctxt"><div class="crgb"></div><div class="chint muted"></div></div></div>';
+      cc={ el:el, dot:el.querySelector(".cdot"), rgb:el.querySelector(".crgb"), hint:el.querySelector(".chint") };
+      colorCards.set(gdx, cc);
+    }
+    $("cards").appendChild(cc.el);   // 항상 그 기기 카드들 뒤(맨 끝)에
+  }
+  function updateColorCard(gdx){
+    var cc=colorCards.get(gdx); if(!cc) return;
+    var cs=colorSensors(gdx); if(!cs) return;
+    var off=COLOR_CH.filter(function(c){ return !cs[c.key].enabled; });
+    if(off.length){
+      cc.dot.style.background="transparent"; cc.rgb.innerHTML="";
+      cc.hint.textContent="📡 채널 선택에서 "+off.map(function(c){return c.ko;}).join("·")+" 채널을 켜면 색이 보여요";
+      return;
+    }
+    var v={ r:cs.r.value, g:cs.g.value, b:cs.b.value };
+    if(!isFinite(v.r)||!isFinite(v.g)||!isFinite(v.b)){ cc.hint.textContent="값을 기다리는 중…"; return; }
+    var mx=Math.max(v.r,v.g,v.b,1e-9);
+    var to=function(x){ return Math.round(255*Math.pow(Math.max(0,x)/mx, 1/2.2)); };   // 비율 → 화면색(감마 보정)
+    var R=to(v.r), G=to(v.g), B=to(v.b);
+    var top=COLOR_CH.reduce(function(a,c){ return v[c.key]>v[a.key]? c : a; });
+    cc.dot.style.background="rgb("+R+","+G+","+B+")";
+    cc.rgb.innerHTML="<b>가장 센 빛: "+top.ko+"</b><br><span class='muted'>R "+R+" · G "+G+" · B "+B+"</span>";
+    cc.hint.textContent="세 값의 비율로 만든 색이에요 (밝기는 뺀 색)";
   }
 
   function drawSpark(c){
@@ -499,7 +558,7 @@
   }
 
   function rebuildCards(){
-    $("cards").innerHTML=""; cards.clear(); colorIdx=0;
+    $("cards").innerHTML=""; cards.clear(); colorCards.clear(); colorIdx=0;
     devices.forEach(function(gdx){
       gdx.sensors.filter(function(s){return s.enabled;}).forEach(function(sensor){ makeCard(gdx,sensor); });
     });
@@ -948,12 +1007,11 @@
         setEnabled:function(v){ this.enabled=v; }, clear:function(){} };
     }
     var sensors=[
-      mk(1,"조도","lux",true,function(e){ return 300+120*Math.sin(e/6)+(Math.random()-0.5)*10; }),
-      mk(2,"빨강","%",false,function(e){ return 40+10*Math.sin(e/5)+(Math.random()-0.5)*2; }),
-      mk(3,"초록","%",false,function(e){ return 35+8*Math.cos(e/7)+(Math.random()-0.5)*2; }),
-      mk(4,"파랑","%",false,function(e){ return 25+6*Math.sin(e/4)+(Math.random()-0.5)*2; }),
-      mk(5,"UVA","mW/m²",false,function(e){ return 12+3*Math.sin(e/9)+(Math.random()-0.5); }),
-      mk(6,"UVB","mW/m²",false,function(e){ return 1.5+0.4*Math.cos(e/8)+(Math.random()-0.5)*0.1; })
+      mk(1,"Light","lux",true,function(e){ return 300+120*Math.sin(e/6)+(Math.random()-0.5)*10; }),
+      mk(2,"UVB","mW/cm²",false,function(e){ return 1.5+0.4*Math.cos(e/8)+(Math.random()-0.5)*0.1; }),
+      mk(3,"615 nm","",false,function(e){ return 40+30*Math.sin(e/5)+(Math.random()-0.5)*2; }),
+      mk(4,"525 nm","",false,function(e){ return 35+8*Math.cos(e/7)+(Math.random()-0.5)*2; }),
+      mk(5,"465 nm","",false,function(e){ return 25+6*Math.sin(e/4)+(Math.random()-0.5)*2; })
     ];
     var temp=[ mk(1,"온도","°C",true,function(e){ return 20+8*(1-Math.exp(-e/40))+(Math.random()-0.5)*0.3; }) ];
     function fakeDev(name, order, list){
